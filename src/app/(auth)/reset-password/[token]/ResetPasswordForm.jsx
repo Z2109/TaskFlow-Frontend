@@ -8,7 +8,7 @@ import { toast } from "react-toastify";
 import { Lock, Eye, EyeOff } from "lucide-react";
 import API from "@/services/api";
 
-export default function ResetPasswordPage() {
+export default function ResetPasswordForm() {
     const { token } = useParams();
     const router = useRouter();
 
@@ -114,7 +114,7 @@ export default function ResetPasswordPage() {
 
                     <button
                         type="submit"
-                        disabled={loading}
+                        disabled={loading || !token}
                         className="w-full rounded-xl bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
                     >
                         {loading ? "Resetting..." : "Reset password"}
