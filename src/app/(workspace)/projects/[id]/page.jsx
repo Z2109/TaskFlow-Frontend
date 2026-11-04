@@ -1,9 +1,12 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import API from "@/services/api";
 import { toast } from "react-toastify";
+import ProjectFiles from "@/components/projects/ProjectFiles";
+import ProjectOverview from "@/components/projects/ProjectOverview";
+
 
 import {
   ArrowLeft,
@@ -20,6 +23,8 @@ import {
   Trash2,
   UserRound,
   GripVertical,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 
 // Task statuses supported by the backend
@@ -63,6 +68,8 @@ const getProjectData = (response) => {
 function ProjectBoardContent() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const shouldCreateTask = searchParams.get("createTask") === "true";
 
   const projectId = params.id;
 
@@ -75,12 +82,17 @@ function ProjectBoardContent() {
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState("Board");
   const [selectedPriority, setSelectedPriority] = useState("All");
+  const [selectedStatus, setSelectedStatus] = useState("All");
+  const [currentCalendarDate, setCurrentCalendarDate] = useState(
+  new Date()
+);
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [activeColumn, setActiveColumn] = useState("Todo");
 
   const [draggedTask, setDraggedTask] = useState(null);
   const [currentUserId, setCurrentUserId] = useState("");
+  
 
   const [form, setForm] = useState({
     title: "",
@@ -300,16 +312,20 @@ function ProjectBoardContent() {
 
   // Search and priority filtering
   const filteredTasks = tasks.filter((task) => {
-    const matchesSearch =
-      task.title?.toLowerCase().includes(search.toLowerCase()) ||
-      task.description?.toLowerCase().includes(search.toLowerCase());
+  const matchesSearch =
+    task.title?.toLowerCase().includes(search.toLowerCase()) ||
+    task.description?.toLowerCase().includes(search.toLowerCase());
 
-    const matchesPriority =
-      selectedPriority === "All" ||
-      task.priority === selectedPriority;
+  const matchesPriority =
+    selectedPriority === "All" ||
+    task.priority === selectedPriority;
 
-    return matchesSearch && matchesPriority;
-  });
+  const matchesStatus =
+    selectedStatus === "All" ||
+    task.status === selectedStatus;
+
+  return matchesSearch && matchesPriority && matchesStatus;
+});
 
   // Format dates
   const formatDate = (date) => {
@@ -320,6 +336,62 @@ function ProjectBoardContent() {
       day: "numeric",
     });
   };
+
+  // CALENDAR HELPERS
+  const getDateKey = (date) => {
+    if (typeof date === "string" && /^\d{4}-\d{2}-\d{2}/.test(date)) {
+      return date.slice(0, 10);
+    }
+
+    const value = new Date(date);
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, "0");
+    const day = String(value.getDate()).padStart(2, "0");
+
+    return `${year}-${month}-${day}`;
+  };
+
+  const getCalendarDays = () => {
+    const year = currentCalendarDate.getFullYear();
+    const month = currentCalendarDate.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const startOffset = firstDay.getDay();
+    const totalDays = new Date(year, month + 1, 0).getDate();
+    const totalCells = Math.ceil((startOffset + totalDays) / 7) * 7;
+
+    return Array.from({ length: totalCells }, (_, index) => {
+      const date = new Date(year, month, index - startOffset + 1);
+      return { date, currentMonth: date.getMonth() === month };
+    });
+  };
+
+  const getTasksForDate = (date) => {
+    const dateKey = getDateKey(date);
+    return filteredTasks.filter(
+      (task) => task.dueDate && getDateKey(task.dueDate) === dateKey
+    );
+  };
+
+  const openCreateModalForDate = (date) => {
+    setActiveColumn("Todo");
+    setForm({
+      title: "",
+      description: "",
+      priority: "Medium",
+      dueDate: getDateKey(date),
+    });
+    setShowCreateModal(true);
+  };
+
+  // Open the existing Create Task modal when redirected from My Tasks.
+  // Remove the query parameter immediately so the modal does not reopen
+  // after unrelated rerenders or when the page is revisited.
+  useEffect(() => {
+    if (shouldCreateTask && projectId) {
+      openCreateModal("Todo");
+      router.replace(`/projects/${projectId}`, { scroll: false });
+    }
+  }, [shouldCreateTask, projectId, router]);
 
   // Loading state
   if (loading) {
@@ -511,13 +583,23 @@ function ProjectBoardContent() {
                 {/* TASK CARDS */}
                 <div className="flex flex-1 flex-col gap-3">
                   {columnTasks.map((task) => (
-                    <div
-                      key={task._id}
-                      draggable
-                      onDragStart={() => setDraggedTask(task)}
-                      onDragEnd={() => setDraggedTask(null)}
-                      className="group cursor-grab rounded-xl border border-slate-100 bg-white p-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md active:cursor-grabbing"
-                    >
+                    
+                <div
+                  key={task._id}
+                  draggable
+                  onClick={() => router.push(`/tasks/${task._id}`)}
+                  onDragStart={() => setDraggedTask(task)}
+                  onDragEnd={() => setDraggedTask(null)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      router.push(`/tasks/${task._id}`);
+                    }
+                  }}
+                  className="group cursor-pointer rounded-xl border border-slate-100 bg-white p-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md active:cursor-grabbing"
+                >
+
                       {/* LABELS */}
                       <div className="mb-3 flex items-center justify-between gap-2">
                         <div className="flex flex-wrap items-center gap-1">
@@ -624,23 +706,436 @@ function ProjectBoardContent() {
         </div>
       )}
 
-      {/* OTHER TABS */}
-      {activeTab !== "Board" && (
-        <div className="flex min-h-[300px] flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white">
-          <LayoutGrid
-            size={35}
-            className="text-indigo-300"
-          />
+      
+      {/* LIST VIEW */}
+{activeTab === "List" && (
+  <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
 
-          <h3 className="mt-4 text-base font-bold text-slate-700">
-            {activeTab} view
-          </h3>
+    {/* TABLE HEADER */}
+    <div className="flex flex-col justify-between gap-3 border-b border-slate-100 p-4 md:flex-row md:items-center">
 
-          <p className="mt-1 text-xs text-slate-400">
-            We'll build this view next.
-          </p>
-        </div>
+      <div>
+        <h3 className="text-sm font-bold text-[#171B49]">
+          All Tasks
+        </h3>
+        <p className="mt-1 text-xs text-slate-400">
+          Manage and track your project tasks
+        </p>
+      </div>
+
+      <select
+        value={selectedStatus}
+        onChange={(event) => setSelectedStatus(event.target.value)}
+        className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-indigo-500"
+      >
+        <option value="All">All statuses</option>
+        {columns.map((column) => (
+          <option key={column.id} value={column.id}>
+            {column.label}
+          </option>
+        ))}
+      </select>
+    </div>
+
+    {/* TASK TABLE */}
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[850px] text-left">
+
+        <thead className="bg-slate-50">
+          <tr className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            <th className="px-5 py-4">Task name</th>
+            <th className="px-5 py-4">Assignee</th>
+            <th className="px-5 py-4">Priority</th>
+            <th className="px-5 py-4">Status</th>
+            <th className="px-5 py-4">Due date</th>
+            <th className="px-5 py-4 text-right">Actions</th>
+          </tr>
+        </thead>
+
+        <tbody className="divide-y divide-slate-100">
+
+          {filteredTasks.map((task) => (
+            <tr
+              key={task._id}
+              className="transition hover:bg-slate-50"
+            >
+
+              {/* TASK NAME */}
+              <td className="px-5 py-4">
+                <div>
+                  <p className="text-sm font-semibold text-[#171B49]">
+                    {task.title}
+                  </p>
+
+                  <p className="mt-1 max-w-[240px] truncate text-xs text-slate-400">
+                    {task.description || "No description"}
+                  </p>
+                </div>
+              </td>
+
+              {/* ASSIGNEE */}
+              <td className="px-5 py-4">
+                <div className="flex items-center gap-2">
+
+                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-100 text-xs font-bold text-indigo-700">
+                    {task.assignedTo?.name
+                      ?.charAt(0)
+                      ?.toUpperCase() || (
+                      <UserRound size={14} />
+                    )}
+                  </div>
+
+                  <span className="text-xs font-medium text-slate-600">
+                    {task.assignedTo?.name || "Unassigned"}
+                  </span>
+
+                </div>
+              </td>
+
+              {/* PRIORITY */}
+              <td className="px-5 py-4">
+                <span
+                  className={`rounded-full px-3 py-1 text-[10px] font-semibold ${
+                    priorityStyles[task.priority] ||
+                    "bg-slate-100 text-slate-600"
+                  }`}
+                >
+                  {task.priority || "Medium"}
+                </span>
+              </td>
+
+              {/* STATUS */}
+              <td className="px-5 py-4">
+                <select
+                  value={task.status || "Todo"}
+                  onChange={async (event) => {
+                    const newStatus = event.target.value;
+                    const oldStatus = task.status;
+
+                    setTasks((previous) =>
+                      previous.map((item) =>
+                        item._id === task._id
+                          ? { ...item, status: newStatus }
+                          : item
+                      )
+                    );
+
+                    try {
+                      await API.patch(
+                        `/task/${task._id}/status`,
+                        { status: newStatus }
+                      );
+
+                      toast.success("Task status updated.");
+                    } catch (error) {
+                      setTasks((previous) =>
+                        previous.map((item) =>
+                          item._id === task._id
+                            ? { ...item, status: oldStatus }
+                            : item
+                        )
+                      );
+
+                      toast.error(
+                        error.response?.data?.message ||
+                        "Unable to update task status."
+                      );
+                    }
+                  }}
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-600 outline-none focus:border-indigo-500"
+                >
+                  {columns.map((column) => (
+                    <option key={column.id} value={column.id}>
+                      {column.label}
+                    </option>
+                  ))}
+                </select>
+              </td>
+
+              {/* DUE DATE */}
+              <td className="px-5 py-4">
+                <div className="flex items-center gap-2 text-xs text-slate-500">
+                  <CalendarDays size={14} />
+                  {formatDate(task.dueDate)}
+                </div>
+              </td>
+
+              {/* ACTIONS */}
+              <td className="px-5 py-4 text-right">
+                <button
+                  onClick={() => handleDeleteTask(task._id)}
+                  className="rounded-lg p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-500"
+                  title="Delete task"
+                >
+                  <Trash2 size={16} />
+                </button>
+              </td>
+
+            </tr>
+          ))}
+
+          {/* EMPTY STATE */}
+          {filteredTasks.length === 0 && (
+            <tr>
+              <td colSpan={6} className="px-5 py-16 text-center">
+                <div className="flex flex-col items-center">
+                  <List size={35} className="text-indigo-300" />
+
+                  <p className="mt-3 text-sm font-semibold text-slate-700">
+                    No tasks found
+                  </p>
+
+                  <p className="mt-1 text-xs text-slate-400">
+                    Create a task or change your filters.
+                  </p>
+
+                  <button
+                    onClick={() => openCreateModal()}
+                    className="mt-4 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700"
+                  >
+                    + Add Task
+                  </button>
+                </div>
+              </td>
+            </tr>
+          )}
+
+        </tbody>
+      </table>
+    </div>
+
+    {/* TABLE FOOTER */}
+    <div className="border-t border-slate-100 px-5 py-3">
+      <p className="text-xs text-slate-400">
+        Showing {filteredTasks.length} of {tasks.length} tasks
+      </p>
+    </div>
+
+  </div>
+)}
+
+
+{/* CALENDAR VIEW */}
+
+{activeTab === "Calendar" && (
+  <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+
+    {/* CALENDAR HEADER */}
+
+    <div className="flex flex-col gap-4 border-b border-slate-100 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
+
+      <div>
+        <h2 className="text-lg font-bold text-[#171B49]">
+          Project calendar
+        </h2>
+
+        <p className="mt-1 text-xs text-slate-500">
+          Tasks are arranged by their due dates.
+        </p>
+      </div>
+
+      <div className="flex items-center gap-2">
+
+        <button
+          type="button"
+          onClick={() => setCurrentCalendarDate(new Date())}
+          className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+        >
+          Today
+        </button>
+
+        <button
+          type="button"
+          onClick={() =>
+            setCurrentCalendarDate(
+              (date) =>
+                new Date(
+                  date.getFullYear(),
+                  date.getMonth() - 1,
+                  1
+                )
+            )
+          }
+          className="rounded-lg border border-slate-200 p-2 text-slate-600 hover:bg-slate-50"
+          aria-label="Previous month"
+        >
+          <ChevronLeft size={17} />
+        </button>
+
+        <h3 className="min-w-[145px] text-center text-sm font-bold text-[#171B49]">
+          {currentCalendarDate.toLocaleDateString("en-IN", {
+            month: "long",
+            year: "numeric",
+          })}
+        </h3>
+
+        <button
+          type="button"
+          onClick={() =>
+            setCurrentCalendarDate(
+              (date) =>
+                new Date(
+                  date.getFullYear(),
+                  date.getMonth() + 1,
+                  1
+                )
+            )
+          }
+          className="rounded-lg border border-slate-200 p-2 text-slate-600 hover:bg-slate-50"
+          aria-label="Next month"
+        >
+          <ChevronRight size={17} />
+        </button>
+
+      </div>
+    </div>
+
+    {/* WEEK DAYS */}
+
+    <div className="grid grid-cols-7 border-b border-slate-100 bg-slate-50">
+
+      {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(
+        (day) => (
+          <div
+            key={day}
+            className="py-3 text-center text-[10px] font-bold uppercase tracking-wide text-slate-400 sm:text-xs"
+          >
+            {day}
+          </div>
+        )
       )}
+
+    </div>
+
+    {/* CALENDAR GRID */}
+
+    <div className="grid grid-cols-7">
+
+      {getCalendarDays().map(({ date, currentMonth }, index) => {
+
+        const dayTasks = getTasksForDate(date);
+
+        const isToday =
+          getDateKey(date) === getDateKey(new Date());
+
+        return (
+          <div
+            key={`${getDateKey(date)}-${index}`}
+            className={`min-h-[112px] border-b border-r border-slate-100 p-1.5 sm:min-h-[145px] sm:p-2 ${
+              currentMonth
+                ? "bg-white"
+                : "bg-slate-50/70"
+            }`}
+          >
+
+            {/* DATE NUMBER */}
+
+            <div className="mb-2 flex items-center justify-between">
+
+              <span
+                className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold ${
+                  isToday
+                    ? "bg-[#5145EC] text-white"
+                    : currentMonth
+                    ? "text-slate-700"
+                    : "text-slate-300"
+                }`}
+              >
+                {date.getDate()}
+              </span>
+
+              {currentMonth && (
+                <button
+                  type="button"
+                  onClick={() => openCreateModalForDate(date)}
+                  className="rounded-md p-1 text-slate-300 hover:bg-indigo-50 hover:text-indigo-600"
+                  title="Add task on this date"
+                >
+                  <Plus size={14} />
+                </button>
+              )}
+
+            </div>
+
+            {/* TASKS */}
+
+            <div className="space-y-1">
+
+              {dayTasks.slice(0, 3).map((task) => (
+
+                <div
+                  key={task._id}
+                  title={`${task.title} · ${task.priority || "Medium"} · ${task.status || "Todo"}`}
+                  className={`truncate rounded-md px-1.5 py-1 text-[9px] font-semibold sm:text-[10px] ${
+                    task.status === "Completed"
+                      ? "bg-emerald-100 text-emerald-700"
+                      : task.priority === "High"
+                      ? "bg-red-100 text-red-700"
+                      : task.priority === "Low"
+                      ? "bg-sky-100 text-sky-700"
+                      : "bg-indigo-100 text-indigo-700"
+                  }`}
+                >
+                  {task.title}
+                </div>
+
+              ))}
+
+              {dayTasks.length > 3 && (
+                <p className="px-1 text-[9px] font-medium text-slate-400">
+                  +{dayTasks.length - 3} more
+                </p>
+              )}
+
+            </div>
+
+          </div>
+        );
+      })}
+
+    </div>
+
+    {/* LEGEND */}
+
+    <div className="flex flex-wrap items-center gap-4 border-t border-slate-100 px-4 py-3">
+
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+        Task status
+      </span>
+
+      {[
+        ["bg-indigo-500", "To Do / In Progress"],
+        ["bg-red-500", "High priority"],
+        ["bg-emerald-500", "Completed"],
+      ].map(([color, label]) => (
+
+        <span
+          key={label}
+          className="flex items-center gap-1.5 text-[10px] text-slate-500"
+        >
+          <span className={`h-2 w-2 rounded-full ${color}`} />
+          {label}
+        </span>
+
+      ))}
+
+    </div>
+
+  </section>
+)}
+
+{/* FILES AND OVERVIEW PLACEHOLDERS */}
+
+
+{/* FILES VIEW */}
+{activeTab === "Files" && (
+  <ProjectFiles projectId={projectId} />
+)}
+
+{/* OVERVIEW PLACEHOLDER */}
+{activeTab === "Overview" && (
+  <ProjectOverview projectId={projectId} />
+)}
 
       {/* CREATE TASK MODAL */}
       {showCreateModal && (

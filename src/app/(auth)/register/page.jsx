@@ -257,6 +257,34 @@ const handleSubmit = async (e) => {
 
           </div>
 
+          {/* TEAM MEMBER REGISTRATION OPTION */}
+<div className="mt-6 rounded-xl border border-indigo-100 bg-indigo-50 p-4">
+  <div className="flex items-start gap-3">
+    <div className="rounded-lg bg-white p-2 text-indigo-600">
+      <User size={20} />
+    </div>
+
+    <div>
+      <h3 className="text-sm font-semibold text-slate-900">
+        Joining an existing company?
+      </h3>
+
+      <p className="mt-1 text-xs leading-5 text-slate-600">
+        You don't need to create another company. Use the
+        invitation link sent to your email to register as a
+        team member.
+      </p>
+
+      <Link
+        href="/accept-invitation"
+        className="mt-3 inline-flex items-center text-sm font-semibold text-indigo-600 hover:text-indigo-800"
+      >
+        Accept invitation and join team →
+      </Link>
+    </div>
+  </div>
+</div>
+
           {/* PROGRESS STEPS */}
 
           <div className="mb-6 flex items-center gap-5 text-xs font-medium">

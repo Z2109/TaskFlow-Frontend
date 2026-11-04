@@ -36,13 +36,35 @@ const priorities = ["Low", "Medium", "High"];
 
 const filters = ["All", "Frontend", "Backend", "Design", "QA"];
 
+function Toggle({ checked, onChange }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition ${
+        checked ? "bg-[#5145EC]" : "bg-[#C9CCDA]"
+      }`}
+    >
+      <span
+        className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition ${
+          checked ? "translate-x-[18px]" : "translate-x-1"
+        }`}
+      />
+    </button>
+  );
+}
+
 export default function CreateProjectModal({
   isOpen,
   onClose,
   onCreate,
   onSaveDraft,
   members = [],
+  membersLoading = false,
   loading = false,
+  currentUserId = "",
 }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -60,26 +82,76 @@ export default function CreateProjectModal({
   const [createFromTemplate, setCreateFromTemplate] = useState(false);
   const [coverImage, setCoverImage] = useState(null);
 
+  const normalizedMembers = useMemo(() => {
+    return (Array.isArray(members) ? members : [])
+      .map((entry) => {
+        // Supports flattened API responses and populated membership records.
+        const user =
+          entry?.user && typeof entry.user === "object"
+            ? entry.user
+            : entry;
+
+        // Use the actual User ID, not the OrganizationMember record ID.
+        const userId = user?._id || entry?.userId;
+        if (!userId) return null;
+
+        const roles = Array.isArray(entry?.roles) ? entry.roles : [];
+        const roleLabel =
+          entry?.roleLabel ||
+          roles.join(", ") ||
+          entry?.role?.name ||
+          (typeof entry?.role === "string" ? entry.role : "") ||
+          user?.jobTitle ||
+          "Member";
+
+        return {
+          ...user,
+          _id: String(userId),
+          name: user?.name || user?.fullName || user?.email || "Team member",
+          email: user?.email || "",
+          avatar: user?.avatar || "",
+          jobTitle: user?.jobTitle || "",
+          department: user?.department || "",
+          roleLabel,
+          membershipStatus: entry?.status || user?.membershipStatus || "active",
+        };
+      })
+      .filter((member) => {
+        if (!member || member.membershipStatus !== "active") return false;
+        if (currentUserId && String(member._id) === String(currentUserId)) {
+          return false;
+        }
+        return true;
+      });
+  }, [members, currentUserId]);
+
   const filteredMembers = useMemo(() => {
-    return members.filter((member) => {
-      const memberName = member.name || "";
-      const jobTitle = member.jobTitle || member.role?.name || "";
-      const department = member.department || "";
+    const query = search.trim().toLowerCase();
+    const filter = activeFilter.toLowerCase();
 
-      const matchesSearch =
-        memberName.toLowerCase().includes(search.toLowerCase()) ||
-        jobTitle.toLowerCase().includes(search.toLowerCase());
+    return normalizedMembers.filter((member) => {
+      const searchableText = [
+        member.name,
+        member.email,
+        member.jobTitle,
+        member.department,
+        member.roleLabel,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
 
-      const filter = activeFilter.toLowerCase();
+      const matchesSearch = !query || searchableText.includes(query);
 
       const matchesFilter =
         activeFilter === "All" ||
-        department.toLowerCase().includes(filter) ||
-        jobTitle.toLowerCase().includes(filter);
+        (member.department || "").toLowerCase().includes(filter) ||
+        (member.jobTitle || "").toLowerCase().includes(filter) ||
+        (member.roleLabel || "").toLowerCase().includes(filter);
 
       return matchesSearch && matchesFilter;
     });
-  }, [members, search, activeFilter]);
+  }, [normalizedMembers, search, activeFilter]);
 
   if (!isOpen) return null;
 
@@ -91,18 +163,27 @@ export default function CreateProjectModal({
     );
   };
 
-  const addTag = (event) => {
-    if (event.key !== "Enter") return;
-
-    event.preventDefault();
-
+  const addTag = () => {
     const value = tagInput.trim();
 
-    if (value && !tags.includes(value)) {
+    if (!value) return;
+
+    const alreadyExists = tags.some(
+      (tag) => tag.toLowerCase() === value.toLowerCase()
+    );
+
+    if (!alreadyExists) {
       setTags((previous) => [...previous, value]);
     }
 
     setTagInput("");
+  };
+
+  const handleTagKeyDown = (event) => {
+    if (event.key === "Enter" || event.key === ",") {
+      event.preventDefault();
+      addTag();
+    }
   };
 
   const removeTag = (tag) => {
@@ -132,60 +213,60 @@ export default function CreateProjectModal({
     onClose();
   };
 
-  const handleSubmit = async (event) => {
-    event.preventDefault();
+  
+const handleSubmit = async (event) => {
+  event.preventDefault();
 
-    if (!name.trim() || !dueDate) return;
+  if (!name.trim() || !dueDate) {
+    return;
+  }
 
-    const projectData = {
-  name: name.trim(),
-  description: description.trim(),
-  category,
-  color,
-  priority,
-  dueDate: dueDate || null,
-  tags,
-  isPrivate,
-  reminderEnabled,
+  // Get only the selected employee IDs
+  const selectedMemberIds = selectedMembers.map(
+    (member) => member._id
+  );
+
+  const projectData = {
+    name: name.trim(),
+    description: description.trim(),
+    category,
+    color,
+    priority,
+    dueDate: dueDate || null,
+    tags,
+
+    // Important: Send selected employees to backend
+    members: selectedMemberIds,
+
+    isPrivate,
+    reminderEnabled,
+  };
+
+  console.log("Project data being submitted:", projectData);
+
+  await onCreate?.(projectData);
 };
 
-    await onCreate?.(projectData);
+  
+const handleSaveDraft = () => {
+  const draftData = {
+    name: name.trim(),
+    description,
+    category,
+    color,
+    priority,
+    dueDate,
+    tags,
+    members: selectedMembers.map((member) => member._id),
+    isPrivate,
+    reminderEnabled,
   };
 
-  const handleSaveDraft = () => {
-    const draftData = {
-      name: name.trim(),
-      description,
-      category,
-      color,
-      priority,
-      dueDate,
-      tags,
-      isPrivate,
-      reminderEnabled,
-      teamMembers: selectedMembers.map((member) => member._id),
-    };
+  if (onSaveDraft) {
+    onSaveDraft(draftData);
+  }
+};
 
-    if (onSaveDraft) {
-      onSaveDraft(draftData);
-    }
-  };
-
-  const Toggle = ({ checked, onChange }) => (
-    <button
-      type="button"
-      onClick={() => onChange(!checked)}
-      className={`relative h-4.5 w-9 rounded-full transition ${
-        checked ? "bg-[#5145EC]" : "bg-[#C8CBD8]"
-      }`}
-    >
-      <span
-        className={`absolute top-0.5 h-3.5 w-3.5 rounded-full bg-white shadow transition ${
-          checked ? "left-5" : "left-0.5"
-        }`}
-      />
-    </button>
-  );
 
   return (
     <div
@@ -393,10 +474,21 @@ export default function CreateProjectModal({
                   <input
                     value={tagInput}
                     onChange={(e) => setTagInput(e.target.value)}
-                    onKeyDown={addTag}
-                    placeholder="Add tag..."
+                    onKeyDown={handleTagKeyDown}
+                    placeholder="Add a tag..."
                     className="min-w-20 flex-1 bg-transparent text-[10px] outline-none"
                   />
+
+                  <button
+                    type="button"
+                    onClick={addTag}
+                    disabled={!tagInput.trim()}
+                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-[#E8E8FF] text-[#5145EC] transition hover:bg-[#DAD9FF] disabled:cursor-not-allowed disabled:opacity-40"
+                    aria-label="Add tag"
+                    title="Add tag"
+                  >
+                    <Plus size={13} />
+                  </button>
                 </div>
               </div>
 
@@ -475,14 +567,23 @@ export default function CreateProjectModal({
 
               {/* Members list */}
               <div className="mt-2 max-h-[225px] overflow-y-auto">
-                {filteredMembers.length === 0 ? (
+                {membersLoading ? (
+                  <div className="py-8 text-center">
+                    <div className="mx-auto mb-2 h-5 w-5 animate-spin rounded-full border-2 border-[#DAD9FF] border-t-[#5145EC]" />
+                    <p className="text-[10px] text-[#777F9E]">
+                      Loading organization members...
+                    </p>
+                  </div>
+                ) : filteredMembers.length === 0 ? (
                   <div className="py-8 text-center">
                     <Users
                       size={20}
                       className="mx-auto mb-2 text-[#A5A9BD]"
                     />
                     <p className="text-[10px] text-[#777F9E]">
-                      No team members found.
+                      {normalizedMembers.length === 0
+                        ? "No active organization members found."
+                        : "No team members match your search."}
                     </p>
                   </div>
                 ) : (
@@ -525,12 +626,12 @@ export default function CreateProjectModal({
                             {member.name}
                           </p>
                           <p className="truncate text-[9px] text-[#777F9E]">
-                            {member.jobTitle || member.role?.name || member.role || "Team member"}
+                            {member.jobTitle || member.roleLabel || "Team member"}
                           </p>
                         </div>
 
                         <span className="max-w-20 truncate rounded-full border border-[#DDE0EC] bg-white px-2 py-1 text-[9px] text-[#606789]">
-                          {member.role?.name || member.role || "Member"}
+                          {member.roleLabel || "Member"}
                         </span>
                       </div>
                     );

@@ -3,7 +3,10 @@
 
 import Link from "next/link";
 import { Suspense, useEffect, useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+
+import { usePermissions } from "@/context/PermissionContext";
+
 import {
   LayoutDashboard,
   FolderKanban,
@@ -11,9 +14,7 @@ import {
   CalendarDays,
   Users,
   ShieldCheck,
-  Sparkles,
   ChartNoAxesCombined,
-  Settings,
   Crown,
   X,
   Zap,
@@ -21,16 +22,50 @@ import {
   Building2,
 } from "lucide-react";
 
+// Sidebar navigation with required permissions
 const navigation = [
-  { title: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-  { title: "Projects", href: "/projects", icon: FolderKanban },
-  { title: "My Tasks", href: "/tasks", icon: CheckSquare },
-  { title: "Calendar", href: "/calendar", icon: CalendarDays },
-  { title: "Team", href: "/team", icon: Users },
-  { title: "Roles & permissions", href: "/roles", icon: ShieldCheck },
-  { title: "AI Assistant", href: "/ai-assistant", icon: Sparkles },
-  { title: "Analytics", href: "/analytics", icon: ChartNoAxesCombined },
-  { title: "Settings", href: "/settings", icon: Settings },
+  {
+    title: "Dashboard",
+    href: "/dashboard",
+    icon: LayoutDashboard,
+    permission: "dashboard:read",
+  },
+  {
+    title: "Projects",
+    href: "/projects",
+    icon: FolderKanban,
+    permission: "project:read",
+  },
+  {
+    title: "My Tasks",
+    href: "/tasks",
+    icon: CheckSquare,
+    permission: "task:read",
+  },
+  {
+    title: "Calendar",
+    href: "/calendar",
+    icon: CalendarDays,
+    permission: "task:read",
+  },
+  {
+    title: "Team",
+    href: "/team",
+    icon: Users,
+    permission: "member:manage",
+  },
+  {
+    title: "Roles & Permissions",
+    href: "/roles",
+    icon: ShieldCheck,
+    permission: "role:manage",
+  },
+  {
+    title: "Analytics",
+    href: "/analytics",
+    icon: ChartNoAxesCombined,
+    permission: "analytics:read",
+  },
 ];
 
 function SidebarContent({
@@ -38,18 +73,67 @@ function SidebarContent({
   onClose = () => {},
 }) {
   const pathname = usePathname();
+  const router = useRouter();
 
   const [organizationName, setOrganizationName] =
     useState("Your Company");
 
-  useEffect(() => {
-    const storedOrganization =
-      localStorage.getItem("organizationName");
+  const {
+    loading,
+    hasPermission,
+  } = usePermissions();
 
-    if (storedOrganization) {
-      setOrganizationName(storedOrganization);
-    }
+  // Update organization name
+  useEffect(() => {
+    const updateOrganization = () => {
+      const storedOrganization =
+        localStorage.getItem("organizationName");
+
+      setOrganizationName(
+        storedOrganization || "Your Company"
+      );
+    };
+
+    updateOrganization();
+
+    window.addEventListener(
+      "storage",
+      updateOrganization
+    );
+
+    // Also listen for same-tab organization changes
+    window.addEventListener(
+      "organizationChanged",
+      updateOrganization
+    );
+
+    return () => {
+      window.removeEventListener(
+        "storage",
+        updateOrganization
+      );
+
+      window.removeEventListener(
+        "organizationChanged",
+        updateOrganization
+      );
+    };
   }, []);
+
+  // Filter navigation according to permissions
+  const visibleNavigation = navigation.filter(
+    (item) => hasPermission(item.permission)
+  );
+
+  // Upgrade navigation
+  const handleUpgrade = () => {
+    onClose();
+    router.push("/upgrade");
+  };
+
+  const isUpgradeActive =
+    pathname === "/upgrade" ||
+    pathname.startsWith("/upgrade/");
 
   return (
     <>
@@ -86,7 +170,9 @@ function SidebarContent({
             className="flex items-center gap-3"
           >
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#5145EC] shadow-lg shadow-indigo-950/30">
-              <span className="text-lg font-bold">T</span>
+              <span className="text-lg font-bold">
+                T
+              </span>
             </div>
 
             <span className="text-[19px] font-bold tracking-tight">
@@ -132,50 +218,90 @@ function SidebarContent({
 
         {/* NAVIGATION */}
         <nav className="sidebar-scroll flex-1 space-y-1 overflow-y-auto px-4 pb-5">
-          {navigation.map((item) => {
-            const Icon = item.icon;
 
-            const isActive =
-              pathname === item.href ||
-              (item.href !== "/dashboard" &&
-                pathname.startsWith(`${item.href}/`));
+          {loading ? (
+            <div className="space-y-3 px-3 py-3">
+              <div className="h-3 w-28 animate-pulse rounded bg-white/10" />
+              <div className="h-3 w-36 animate-pulse rounded bg-white/10" />
+              <div className="h-3 w-24 animate-pulse rounded bg-white/10" />
+            </div>
+          ) : (
+            <>
+              {visibleNavigation.map((item) => {
+                const Icon = item.icon;
 
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={onClose}
+                const isActive =
+                  pathname === item.href ||
+                  (item.href !== "/dashboard" &&
+                    pathname.startsWith(`${item.href}/`));
+
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={onClose}
+                    className={`
+                      group flex min-h-[43px] items-center gap-3
+                      rounded-xl px-3.5 py-2.5
+                      text-[13px] font-medium
+                      transition-all duration-200
+                      ${
+                        isActive
+                          ? "bg-[#5145EC] text-white shadow-lg shadow-indigo-950/20"
+                          : "text-indigo-100/75 hover:bg-white/10 hover:text-white"
+                      }
+                    `}
+                  >
+                    <Icon
+                      size={17}
+                      strokeWidth={isActive ? 2.4 : 1.8}
+                      className={
+                        isActive
+                          ? "text-white"
+                          : "text-indigo-200/75 group-hover:text-white"
+                      }
+                    />
+
+                    <span>{item.title}</span>
+                  </Link>
+                );
+              })}
+
+              {/* UPGRADE NAVIGATION */}
+              <button
+                type="button"
+                onClick={handleUpgrade}
                 className={`
-                  group flex min-h-[43px] items-center gap-3
+                  group flex min-h-[43px] w-full items-center gap-3
                   rounded-xl px-3.5 py-2.5
-                  text-[13px] font-medium
+                  text-left text-[13px] font-medium
                   transition-all duration-200
                   ${
-                    isActive
+                    isUpgradeActive
                       ? "bg-[#5145EC] text-white shadow-lg shadow-indigo-950/20"
                       : "text-indigo-100/75 hover:bg-white/10 hover:text-white"
                   }
                 `}
               >
-                <Icon
+                <Crown
                   size={17}
-                  strokeWidth={isActive ? 2.4 : 1.8}
                   className={
-                    isActive
+                    isUpgradeActive
                       ? "text-white"
                       : "text-indigo-200/75 group-hover:text-white"
                   }
                 />
 
-                <span>{item.title}</span>
-              </Link>
-            );
-          })}
+                <span>Upgrade plan</span>
+              </button>
+            </>
+          )}
         </nav>
 
         {/* UPGRADE CARD */}
         <div className="shrink-0 px-4 pb-5">
           <div className="rounded-xl border border-indigo-400/10 bg-[#222758] p-3.5">
+
             <div className="mb-2 flex items-center gap-2">
               <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-500/20 text-indigo-300">
                 <Crown size={15} />
@@ -192,9 +318,7 @@ function SidebarContent({
 
             <button
               type="button"
-              onClick={() => {
-                // Connect your billing page here later.
-              }}
+              onClick={handleUpgrade}
               className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#5145EC] px-3 py-2.5 text-[12px] font-semibold text-white transition hover:bg-[#6257F2] active:scale-[0.98]"
             >
               <Zap size={14} />

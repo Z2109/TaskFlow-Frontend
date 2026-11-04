@@ -13,12 +13,16 @@ import {
   MoreVertical,
   ArrowUpDown,
   X,
-  FolderPlus,
   Loader2,
+  CheckCircle2,
+  Archive,
+  Trash2,
+  RotateCcw,
 } from "lucide-react";
 
 import API from "@/services/api";
 import CreateProjectModal from "@/components/projects/CreateProjectModal";
+import { usePermissions } from "@/context/PermissionContext";
 
 const FILTERS = [
   { label: "All", value: "All" },
@@ -78,18 +82,31 @@ function getProjectMembers(project) {
   return project.teamMembers || project.members || [];
 }
 
-function ProjectCard({ project, index, onClick }) {
+function ProjectCard({
+  project,
+  index,
+  onClick,
+  onProjectAction,
+  openMenuId,
+  setOpenMenuId,
+  processingProjectId,
+  canUpdateProject,
+  canDeleteProject,
+}) {
   const color = COLORS[index % COLORS.length];
   const progress = getProjectProgress(project);
   const members = getProjectMembers(project);
   const totalTasks =
     project.totalTasks ?? project.taskCount ?? project.tasks?.length ?? 0;
   const completedTasks = project.completedTasks ?? 0;
+  const menuOpen = openMenuId === project._id;
+  const isProcessing = processingProjectId === project._id;
 
   return (
     <article
       onClick={onClick}
       onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           onClick();
@@ -120,16 +137,87 @@ function ProjectCard({ project, index, onClick }) {
             {project.status || "Active"}
           </span>
 
-          <button
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-            }}
-            className="rounded p-1 text-gray-400 opacity-0 transition hover:bg-gray-100 group-hover:opacity-100"
-            aria-label="Project options"
-          >
-            <MoreVertical size={15} />
-          </button>
+          {(canUpdateProject || canDeleteProject) && (
+            <div className="relative">
+              <button
+                type="button"
+                disabled={isProcessing}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setOpenMenuId(menuOpen ? null : project._id);
+                }}
+                className="rounded-lg p-2 text-gray-500 transition hover:bg-gray-100 hover:text-[#171B49] disabled:opacity-50"
+                aria-label="Project options"
+                aria-expanded={menuOpen}
+              >
+                {isProcessing ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <MoreVertical size={16} />
+                )}
+              </button>
+
+              {menuOpen && (
+                <div
+                  onClick={(event) => event.stopPropagation()}
+                  className="absolute right-0 top-10 z-30 w-48 rounded-xl border border-gray-100 bg-white p-1.5 shadow-xl"
+                >
+                  {canUpdateProject && (
+                    <>
+                      {project.status !== "Completed" && (
+                        <button
+                          type="button"
+                          onClick={() => onProjectAction(project, "Completed")}
+                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-xs text-gray-700 hover:bg-green-50 hover:text-green-700"
+                        >
+                          <CheckCircle2 size={15} />
+                          Mark as Done
+                        </button>
+                      )}
+
+                      {project.status !== "Active" && (
+                        <button
+                          type="button"
+                          onClick={() => onProjectAction(project, "Active")}
+                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-xs text-gray-700 hover:bg-indigo-50 hover:text-indigo-700"
+                        >
+                          <RotateCcw size={15} />
+                          {project.status === "Archived" ? "Restore Project" : "Mark as Active"}
+                        </button>
+                      )}
+
+                      {project.status !== "Archived" && (
+                        <button
+                          type="button"
+                          onClick={() => onProjectAction(project, "Archived")}
+                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-xs text-gray-700 hover:bg-amber-50 hover:text-amber-700"
+                        >
+                          <Archive size={15} />
+                          Archive Project
+                        </button>
+                      )}
+                    </>
+                  )}
+
+                  {canDeleteProject && (
+                    <>
+                      {canUpdateProject && (
+                        <div className="my-1 border-t border-gray-100" />
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => onProjectAction(project, "Delete")}
+                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-xs text-red-600 hover:bg-red-50"
+                      >
+                        <Trash2 size={15} />
+                        Delete Project
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -188,17 +276,137 @@ function ProjectCard({ project, index, onClick }) {
 
 export default function ProjectsPage() {
   const router = useRouter();
+  const {
+    loading: permissionsLoading,
+    hasPermission,
+  } = usePermissions();
+
+  const canViewProjects = hasPermission("project:read");
+  const canCreateProject = hasPermission("project:create");
+  const canUpdateProject = hasPermission("project:update");
+  const canDeleteProject = hasPermission("project:delete");
+  const canReadTasks = hasPermission("task:read");
 
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
 
+  // Organization members available for project assignment
+  const [members, setMembers] = useState([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+
   const [activeFilter, setActiveFilter] = useState("All");
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState("Recently updated");
   const [showFilters, setShowFilters] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [openMenuId, setOpenMenuId] = useState(null);
+  const [processingProjectId, setProcessingProjectId] = useState(null);
+  const [confirmation, setConfirmation] = useState(null);
+
+  // Fetch active organization members, excluding the organization owner.
+  const loadOrganizationMembers = useCallback(async () => {
+    try {
+      setMembersLoading(true);
+
+      const response = await API.get("/team/organization/members");
+      const result = getData(response);
+
+      const organizationMembers = Array.isArray(result)
+        ? result
+        : Array.isArray(result.members)
+          ? result.members
+          : Array.isArray(result.data)
+            ? result.data
+            : [];
+
+      // Read the authenticated user ID from the same storage used by login.
+      // Support common response shapes: user, data.user, and nested profile.
+      const getId = (value) => {
+        if (!value) return "";
+        if (typeof value === "string") return value;
+        if (typeof value !== "object") return "";
+
+        const directId = value._id || value.id || value.userId;
+        if (directId) return String(directId);
+
+        return getId(value.user) || getId(value.data) || getId(value.profile);
+      };
+
+      let currentUserId = "";
+      try {
+        const storedUser =
+          localStorage.getItem("user") || sessionStorage.getItem("user");
+        if (storedUser) currentUserId = getId(JSON.parse(storedUser));
+      } catch (storageError) {
+        console.warn("Could not read the logged-in user:", storageError);
+      }
+
+      const getMemberUser = (member) =>
+        member?.user || member?.member || member?.employee || member;
+
+      const activeAssignableMembers = organizationMembers.filter((member) => {
+        if (member?.status && member.status !== "active") return false;
+
+        const memberUser = getMemberUser(member);
+        const memberUserId = getId(memberUser) || getId(member?.userId);
+
+        // The logged-in organization owner must not be offered as an assignee.
+        if (currentUserId && memberUserId === currentUserId) return false;
+
+        const roleValue = member?.role || memberUser?.role;
+        const roleName = String(
+          roleValue?.name ||
+            roleValue?.title ||
+            member?.roleName ||
+            memberUser?.roleName ||
+            (typeof roleValue === "string" && !/^[a-f0-9]{24}$/i.test(roleValue)
+              ? roleValue
+              : "")
+        ).trim().toLowerCase();
+
+        // Exclude owners even when the owner is not the current session user.
+        if (
+          member?.isOwner === true ||
+          member?.isOrganizationOwner === true ||
+          memberUser?.isOwner === true ||
+          ["owner", "organization owner", "org owner"].includes(roleName)
+        ) {
+          return false;
+        }
+
+        return true;
+      });
+
+      console.log("Project assignee filtering:", {
+        currentUserId,
+        organizationMemberCount: organizationMembers.length,
+        assignableMemberCount: activeAssignableMembers.length,
+        members: organizationMembers.map((member) => ({
+          id: getId(getMemberUser(member)) || getId(member?.userId),
+          name: getMemberUser(member)?.name,
+          role: member?.role?.name || member?.roleName || getMemberUser(member)?.role?.name,
+          isOwner: member?.isOwner || member?.isOrganizationOwner,
+        })),
+      });
+      setMembers(activeAssignableMembers);
+    } catch (err) {
+      console.error("Organization members loading error:", {
+        message: err.message,
+        status: err.response?.status,
+        data: err.response?.data,
+      });
+
+      setMembers([]);
+      toast.error(
+        err.response?.data?.message ||
+          "Unable to load organization members."
+      );
+    } finally {
+      setMembersLoading(false);
+    }
+  }, []);
 
   const loadProjects = useCallback(async () => {
     setLoading(true);
@@ -212,7 +420,62 @@ export default function ProjectsPage() {
         ? result
         : result.projects || result.data || [];
 
-      setProjects(Array.isArray(list) ? list : []);
+      let tasks = [];
+
+      // Task counts are optional. Do not call the tasks API when the
+      // current user does not have task:read permission.
+      if (canReadTasks) {
+        try {
+          const taskResponse = await API.get("/tasks/list");
+          const taskResult = getData(taskResponse);
+          tasks = Array.isArray(taskResult)
+            ? taskResult
+            : taskResult.tasks || taskResult.data || [];
+        } catch (taskError) {
+          console.warn("Project task counts could not be loaded:", taskError);
+        }
+      }
+
+      const taskCounts = new Map();
+
+      tasks.forEach((task) => {
+        const projectId =
+          typeof task.project === "object"
+            ? task.project?._id
+            : task.project;
+
+        if (!projectId) return;
+
+        const current = taskCounts.get(String(projectId)) || {
+          totalTasks: 0,
+          completedTasks: 0,
+        };
+
+        current.totalTasks += 1;
+        if (task.status === "Completed") current.completedTasks += 1;
+
+        taskCounts.set(String(projectId), current);
+      });
+
+      const projectsWithProgress = (Array.isArray(list) ? list : []).map(
+        (project) => {
+          const counts = taskCounts.get(String(project._id)) || {
+            totalTasks: 0,
+            completedTasks: 0,
+          };
+
+          return {
+            ...project,
+            ...counts,
+            progress:
+              counts.totalTasks > 0
+                ? Math.round((counts.completedTasks / counts.totalTasks) * 100)
+                : 0,
+          };
+        }
+      );
+
+      setProjects(projectsWithProgress);
     } catch (err) {
       console.error("Projects loading error:", {
         message: err.message,
@@ -226,11 +489,23 @@ export default function ProjectsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [canReadTasks]);
 
   useEffect(() => {
-    loadProjects();
-  }, [loadProjects]);
+    if (!permissionsLoading && canViewProjects) {
+      loadProjects();
+    } else if (!permissionsLoading && !canViewProjects) {
+      setLoading(false);
+      setProjects([]);
+    }
+  }, [permissionsLoading, canViewProjects, loadProjects]);
+
+  // Load organization members when the create-project modal is opened.
+  useEffect(() => {
+    if (showCreateModal) {
+      loadOrganizationMembers();
+    }
+  }, [showCreateModal, loadOrganizationMembers]);
 
   const counts = useMemo(() => {
     return {
@@ -280,25 +555,146 @@ export default function ProjectsPage() {
   }, [projects, activeFilter, search, sortBy]);
 
   const handleCreateProject = async (projectData) => {
+  if (!canCreateProject) {
+    toast.error("You don't have permission to create projects.");
+    return;
+  }
+
+  try {
+    setCreating(true);
+
+    console.log("Creating project:", projectData);
+
+    const response = await API.post(
+      "/projects/create",
+      projectData
+    );
+
+    if (response.data?.success === false) {
+      throw new Error(
+        response.data?.message || "Project creation failed."
+      );
+    }
+
+    toast.success(
+      response.data?.message || "Project created successfully!"
+    );
+
+    setShowCreateModal(false);
+    await loadProjects();
+
+  } catch (err) {
+    console.error("Create project error:", err);
+
+    toast.error(
+      err.response?.data?.message ||
+      err.message ||
+      "Unable to create project."
+    );
+  } finally {
+    setCreating(false);
+  }
+};
+
+  const handleProjectAction = (project, action) => {
+    setOpenMenuId(null);
+
+    if (action === "Delete" && !canDeleteProject) {
+      toast.error("You don't have permission to delete projects.");
+      return;
+    }
+
+    if (action !== "Delete" && !canUpdateProject) {
+      toast.error("You don't have permission to update projects.");
+      return;
+    }
+
+    if (action === "Delete") {
+      setConfirmation({
+        project,
+        action,
+        title: "Delete this project?",
+        message: `“${project.name}” and all its tasks will be permanently deleted. This action cannot be undone.`,
+        confirmLabel: "Delete project",
+      });
+      return;
+    }
+
+    const actionLabels = {
+      Completed: "mark this project as completed",
+      Active: "move this project back to active",
+      Archived: "archive this project",
+    };
+
+    setConfirmation({
+      project,
+      action,
+      title:
+        action === "Completed"
+          ? "Mark project as done?"
+          : action === "Archived"
+            ? "Archive this project?"
+            : "Restore this project?",
+      message: `Are you sure you want to ${actionLabels[action]}?`,
+      confirmLabel:
+        action === "Completed"
+          ? "Mark as done"
+          : action === "Archived"
+            ? "Archive project"
+            : "Mark as active",
+    });
+  };
+
+  const confirmProjectAction = async () => {
+    if (!confirmation?.project) return;
+
+    const { project, action } = confirmation;
+
+    if (action === "Delete" && !canDeleteProject) {
+      setConfirmation(null);
+      toast.error("You don't have permission to delete projects.");
+      return;
+    }
+
+    if (action !== "Delete" && !canUpdateProject) {
+      setConfirmation(null);
+      toast.error("You don't have permission to update projects.");
+      return;
+    }
+
     try {
-      setCreating(true);
+      setProcessingProjectId(project._id);
+      setConfirmation(null);
 
-      const response = await API.post("/projects/create", projectData);
+      if (action === "Delete") {
+        const response = await API.delete(`/projects/${project._id}`);
 
-      if (response.data?.success === false) {
-        throw new Error(
-          response.data?.message || "Project creation failed."
-        );
+        if (response.data?.success === false) {
+          throw new Error(response.data?.message || "Project deletion failed.");
+        }
+
+        toast.success(response.data?.message || "Project and its tasks deleted.");
+      } else {
+        const response = await API.patch(`/projects/${project._id}/status`, {
+          status: action,
+        });
+
+        if (response.data?.success === false) {
+          throw new Error(response.data?.message || "Project status update failed.");
+        }
+
+        const messages = {
+          Completed: "Project marked as completed.",
+          Active: "Project moved to active.",
+          Archived: "Project archived successfully.",
+        };
+
+        toast.success(response.data?.message || messages[action]);
       }
 
-      toast.success(
-        response.data?.message || "Project created successfully!"
-      );
-
-      setShowCreateModal(false);
       await loadProjects();
     } catch (err) {
-      console.error("Create project error:", {
+      console.error("Project action error:", {
         message: err.message,
         status: err.response?.status,
         data: err.response?.data,
@@ -307,19 +703,49 @@ export default function ProjectsPage() {
       toast.error(
         err.response?.data?.message ||
           err.message ||
-          "Unable to create project."
+          "Unable to update this project."
       );
     } finally {
-      setCreating(false);
+      setProcessingProjectId(null);
     }
   };
 
   const openCreateProject = () => {
+    if (!canCreateProject) {
+      toast.error("You don't have permission to create projects.");
+      return;
+    }
     setShowCreateModal(true);
   };
 
+  if (permissionsLoading) {
+    return (
+      <div className="flex min-h-[50vh] items-center justify-center">
+        <Loader2 className="animate-spin text-[#5145EC]" size={30} />
+      </div>
+    );
+  }
+
+  if (!canViewProjects) {
+    return (
+      <div className="flex min-h-[50vh] flex-col items-center justify-center text-center">
+        <Folder className="mb-4 text-gray-400" size={42} />
+        <h2 className="text-xl font-bold text-[#171B49]">Access Restricted</h2>
+        <p className="mt-2 max-w-md text-sm text-[#606789]">
+          You don't have permission to view projects. Please contact your
+          organization administrator.
+        </p>
+      </div>
+    );
+  }
+
   return (
-    <div className="mx-auto w-full max-w-[1600px] space-y-6">
+    <div
+      className="mx-auto w-full max-w-[1600px] space-y-6"
+      onClick={() => {
+        if (openMenuId) setOpenMenuId(null);
+      }}
+    >
 
       {/* Page heading */}
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
@@ -333,14 +759,16 @@ export default function ProjectsPage() {
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={openCreateProject}
-          className="flex items-center justify-center gap-2 rounded-xl bg-[#5145EC] px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#4035D5]"
-        >
-          <Plus size={17} />
-          New project
-        </button>
+        {canCreateProject && (
+          <button
+            type="button"
+            onClick={openCreateProject}
+            className="flex items-center justify-center gap-2 rounded-xl bg-[#5145EC] px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#4035D5]"
+          >
+            <Plus size={17} />
+            New project
+          </button>
+        )}
       </div>
 
       {/* Status filters */}
@@ -484,7 +912,7 @@ export default function ProjectsPage() {
               : "Create your first project to get started."}
           </p>
 
-          {!search && (
+          {!search && canCreateProject && (
             <button
               type="button"
               onClick={openCreateProject}
@@ -505,10 +933,17 @@ export default function ProjectsPage() {
               onClick={() =>
                 router.push(`/projects/${project._id}`)
               }
+              onProjectAction={handleProjectAction}
+              openMenuId={openMenuId}
+              setOpenMenuId={setOpenMenuId}
+              processingProjectId={processingProjectId}
+              canUpdateProject={canUpdateProject}
+              canDeleteProject={canDeleteProject}
             />
           ))}
 
           {/* Create project card */}
+          {canCreateProject && (
           <button
             type="button"
             onClick={openCreateProject}
@@ -526,20 +961,92 @@ export default function ProjectsPage() {
               Start from scratch or a template
             </span>
           </button>
+          )}
         </div>
       )}
 
-      {/* Existing Create Project Modal */}
-      <CreateProjectModal
-        isOpen={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
-        members={[]}
-        loading={creating}
-        onCreate={handleCreateProject}
-        onSaveDraft={() => {
-          toast.info("Draft functionality will be added next.");
-        }}
-      />
+      {/* Project action confirmation */}
+      {confirmation && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/50 p-4"
+          onClick={() => setConfirmation(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="project-confirmation-title"
+            onClick={(event) => event.stopPropagation()}
+            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+          >
+            <div
+              className={`mb-4 flex h-11 w-11 items-center justify-center rounded-xl ${
+                confirmation.action === "Delete"
+                  ? "bg-red-50 text-red-600"
+                  : confirmation.action === "Archived"
+                    ? "bg-amber-50 text-amber-600"
+                    : "bg-indigo-50 text-indigo-600"
+              }`}
+            >
+              {confirmation.action === "Delete" ? (
+                <Trash2 size={20} />
+              ) : confirmation.action === "Archived" ? (
+                <Archive size={20} />
+              ) : (
+                <CheckCircle2 size={20} />
+              )}
+            </div>
+
+            <h2
+              id="project-confirmation-title"
+              className="text-lg font-bold text-[#171B49]"
+            >
+              {confirmation.title}
+            </h2>
+
+            <p className="mt-2 text-sm leading-6 text-[#606789]">
+              {confirmation.message}
+            </p>
+
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmation(null)}
+                className="rounded-lg border border-[#DDE0EB] px-4 py-2.5 text-sm font-semibold text-[#606789] hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={confirmProjectAction}
+                disabled={Boolean(processingProjectId)}
+                className={`rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60 ${
+                  confirmation.action === "Delete"
+                    ? "bg-red-600 hover:bg-red-700"
+                    : "bg-[#5145EC] hover:bg-[#4035D5]"
+                }`}
+              >
+                {confirmation.confirmLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create Project Modal */}
+      {canCreateProject && (
+        <CreateProjectModal
+          isOpen={showCreateModal}
+          onClose={() => setShowCreateModal(false)}
+          members={members}
+          membersLoading={membersLoading}
+          loading={creating}
+          onCreate={handleCreateProject}
+          onSaveDraft={() => {
+            toast.info("Draft functionality will be added next.");
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -1,12 +1,17 @@
-
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useDispatch } from "react-redux";
 import Link from "next/link";
 import { toast } from "react-toastify";
-import { Shield, Sparkles, User } from "lucide-react";
+import {
+  Shield,
+  Sparkles,
+  User,
+  Building2,
+  Users,
+} from "lucide-react";
 
 import API from "@/services/api";
 import { setCredentials } from "@/features/auth/authSlice";
@@ -15,6 +20,9 @@ export default function LoginPage() {
   const router = useRouter();
   const dispatch = useDispatch();
 
+  const [loginType, setLoginType] = useState("owner");
+  const [invitationToken, setInvitationToken] = useState("");
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -22,106 +30,120 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  // An invitation token may preselect Team Member, but it is not
+  // required for an existing member to sign in.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("token") || "";
+
+    if (token) {
+      setInvitationToken(token);
+      setLoginType("team");
+    } else if (params.get("type") === "team") {
+      setLoginType("team");
+    }
+  }, []);
+
   const handleLogin = async (e) => {
     e.preventDefault();
-
-    setLoading(true);
     setError("");
 
+    if (!email.trim() || !password) {
+      const message = "Please enter your email and password.";
+      setError(message);
+      toast.error(message);
+      return;
+    }
+
+    setLoading(true);
+
     try {
-      // 1. Authenticate user
+      // Owners and existing team members use the same login API.
       const response = await API.post("/user/login", {
-        email: email.trim(),
+        email: email.trim().toLowerCase(),
         password,
       });
 
       if (!response.data?.success) {
-        throw new Error(
-          response.data?.message || "Login failed!"
-        );
+        throw new Error(response.data?.message || "Login failed.");
       }
 
       const { token, user } = response.data;
 
-      // 2. Validate backend response
       if (!token || !user?.id) {
-        throw new Error(
-          "User ID or authentication token is missing."
-        );
+        throw new Error("User ID or authentication token is missing.");
       }
 
-      // 3. Persist authentication details
-      const storage = keepSignedIn
-        ? localStorage
-        : sessionStorage;
+      // Save authentication before requesting organization data.
+      const storage = keepSignedIn ? localStorage : sessionStorage;
+      const otherStorage = keepSignedIn ? sessionStorage : localStorage;
 
       storage.setItem("token", token);
       storage.setItem("user", JSON.stringify(user));
-
-      // Remove stale authentication from the other storage
-      const otherStorage = keepSignedIn
-        ? sessionStorage
-        : localStorage;
-
       otherStorage.removeItem("token");
       otherStorage.removeItem("user");
 
-      // 4. Clear previous organization selection
+      // Clear the previous workspace selection; resolve it for this user.
       localStorage.removeItem("organizationId");
       localStorage.removeItem("organizationName");
 
-      // 5. Update Redux authentication state
       dispatch(setCredentials({ token, user }));
 
-      // 6. Fetch the user's organization
+      // This endpoint must return the organization associated with the
+      // authenticated user (owner OR active organization member).
       const organizationResponse = await API.get(
         "/organizations/my-organization",
         {
-          headers: {
-            token,
-          },
+          headers: { token },
         }
       );
 
       const organization =
-        organizationResponse.data?.data?.organization;
+        organizationResponse.data?.data?.organization ||
+        organizationResponse.data?.organization ||
+        organizationResponse.data?.data;
 
-      if (!organization?._id) {
+      const organizationId = organization?._id || organization?.id;
+
+      if (!organizationId) {
         throw new Error(
-          "Organization information not found."
+          loginType === "team"
+            ? "No active organization was found for this team member. Ask your organization owner to check your membership."
+            : "Organization information not found."
         );
       }
 
-      // 7. Save organization information
-      localStorage.setItem(
-        "organizationId",
-        organization._id
-      );
-
+      localStorage.setItem("organizationId", organizationId);
       localStorage.setItem(
         "organizationName",
-        organization.name
+        organization.name || "My Organization"
       );
 
-      // 8. Login successful
-      toast.success("Login successful!");
+      toast.success(
+        loginType === "team"
+          ? "Welcome back to your team!"
+          : "Welcome back!"
+      );
 
       router.replace("/dashboard");
-
     } catch (error) {
-      console.error(
-        "LOGIN ERROR:",
-        error.response?.data || error
-      );
+      console.error("LOGIN ERROR:", error.response?.data || error);
 
       const message =
         error.response?.data?.message ||
         error.message ||
-        "Login failed!";
+        "Login failed.";
+
+      // Avoid leaving an authenticated session behind if workspace lookup fails.
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+      sessionStorage.removeItem("token");
+      sessionStorage.removeItem("user");
+      localStorage.removeItem("organizationId");
+      localStorage.removeItem("organizationName");
 
       setError(message);
       toast.error(message);
-
     } finally {
       setLoading(false);
     }
@@ -145,7 +167,7 @@ export default function LoginPage() {
 
         <div className="max-w-lg">
           <h1 className="mb-5 text-5xl font-bold leading-tight">
-            Turn ideas into progress
+            Turn ideas into progress.
           </h1>
 
           <p className="mb-8 text-indigo-200">
@@ -200,7 +222,7 @@ export default function LoginPage() {
       <section className="flex min-h-screen items-center justify-center px-6 py-12">
         <div className="w-full max-w-md">
 
-          <div className="mb-10 flex items-center gap-3">
+          <div className="mb-8 flex items-center gap-3">
             <span className="grid h-10 w-10 place-items-center rounded-xl bg-indigo-600 font-bold text-white">
               T
             </span>
@@ -210,7 +232,7 @@ export default function LoginPage() {
             </span>
           </div>
 
-          <div className="mb-8">
+          <div className="mb-7">
             <p className="mb-3 text-sm font-semibold text-indigo-600">
               YOUR WORKPLACE
             </p>
@@ -220,9 +242,90 @@ export default function LoginPage() {
             </h2>
 
             <p className="mt-2 text-sm text-slate-500">
-              Sign in to your company workspace
+              Sign in to continue to your workspace.
             </p>
           </div>
+
+          {/* LOGIN TYPE SELECTOR */}
+          <div className="mb-7 grid grid-cols-2 gap-3">
+
+            <button
+              type="button"
+              onClick={() => {
+                setLoginType("owner");
+                setError("");
+              }}
+              className={`rounded-xl border p-4 text-left transition ${
+                loginType === "owner"
+                  ? "border-indigo-600 bg-indigo-50 ring-2 ring-indigo-100"
+                  : "border-slate-200 hover:border-indigo-300"
+              }`}
+            >
+              <Building2
+                size={22}
+                className={
+                  loginType === "owner"
+                    ? "text-indigo-600"
+                    : "text-slate-500"
+                }
+              />
+
+              <p className="mt-3 text-sm font-semibold text-slate-900">
+                Owner Login
+              </p>
+
+              <p className="mt-1 text-xs text-slate-500">
+                Manage your company
+              </p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setLoginType("team");
+                setError("");
+              }}
+              className={`rounded-xl border p-4 text-left transition ${
+                loginType === "team"
+                  ? "border-indigo-600 bg-indigo-50 ring-2 ring-indigo-100"
+                  : "border-slate-200 hover:border-indigo-300"
+              }`}
+            >
+              <Users
+                size={22}
+                className={
+                  loginType === "team"
+                    ? "text-indigo-600"
+                    : "text-slate-500"
+                }
+              />
+
+              <p className="mt-3 text-sm font-semibold text-slate-900">
+                Team Member
+              </p>
+
+              <p className="mt-1 text-xs text-slate-500">
+                Access your team
+              </p>
+            </button>
+
+          </div>
+
+          {/* TEAM MEMBER INFORMATION */}
+          {loginType === "team" && (
+            <div className="mb-5 rounded-xl border border-indigo-100 bg-indigo-50 p-4">
+              <p className="text-sm font-semibold text-indigo-900">
+                Team member sign in
+              </p>
+
+              <p className="mt-1 text-xs leading-5 text-indigo-700">
+                Sign in with the email address and password you used
+                when you accepted your organization invitation.
+                You only need an invitation link when joining for the
+                first time.
+              </p>
+            </div>
+          )}
 
           <form onSubmit={handleLogin} className="space-y-5">
 
@@ -314,20 +417,43 @@ export default function LoginPage() {
               disabled={loading}
               className="w-full rounded-xl bg-indigo-600 px-4 py-3.5 font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {loading ? "Signing in..." : "Sign in"}
+              {loading
+                ? "Signing in..."
+                : loginType === "owner"
+                  ? "Sign in as Owner"
+                  : "Sign in as Team Member"}
             </button>
 
           </form>
 
-          <p className="mt-7 text-center text-sm text-slate-500">
-            New here?{" "}
-            <Link
-              href="/register"
-              className="font-semibold text-indigo-600 hover:text-indigo-800"
-            >
-              Register your company
-            </Link>
-          </p>
+          {/* REGISTRATION LINKS */}
+          <div className="mt-8 space-y-4 text-center">
+
+            <p className="text-sm text-slate-500">
+              New to TaskFlow?{" "}
+              <Link
+                href="/register"
+                className="font-semibold text-indigo-600 hover:text-indigo-800"
+              >
+                Create a company account
+              </Link>
+            </p>
+
+            <p className="text-sm text-slate-500">
+              Invited by a company?{" "}
+              <Link
+                href={
+                  invitationToken
+                    ? `/accept-invitation?token=${encodeURIComponent(invitationToken)}`
+                    : "/accept-invitation"
+                }
+                className="font-semibold text-indigo-600 hover:text-indigo-800"
+              >
+                Join your team
+              </Link>
+            </p>
+
+          </div>
 
           <p className="mt-8 text-center text-xs text-slate-400">
             Secure workplace · Terms · Privacy
