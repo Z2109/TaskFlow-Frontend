@@ -20,6 +20,7 @@ import {
   Zap,
   ChevronDown,
   Building2,
+  Sparkles,
 } from "lucide-react";
 
 // Sidebar navigation with required permissions
@@ -66,6 +67,12 @@ const navigation = [
     icon: ChartNoAxesCombined,
     permission: "analytics:read",
   },
+  {
+    title: "AI Assistant",
+    href: "/ai-assistant",
+    icon: Sparkles,
+    permission: "ai:chat",
+  },
 ];
 
 function SidebarContent({
@@ -101,7 +108,6 @@ function SidebarContent({
       updateOrganization
     );
 
-    // Also listen for same-tab organization changes
     window.addEventListener(
       "organizationChanged",
       updateOrganization
@@ -263,6 +269,13 @@ function SidebarContent({
                     />
 
                     <span>{item.title}</span>
+
+                    {/* AI Assistant indicator */}
+                    {item.title === "AI Assistant" && (
+                      <span className="ml-auto rounded-md bg-indigo-400/20 px-1.5 py-0.5 text-[9px] font-bold text-indigo-200">
+                        AI
+                      </span>
+                    )}
                   </Link>
                 );
               })}
