@@ -2,7 +2,7 @@
 
 A modern project and team management workspace built with **Next.js, React, JavaScript, and Tailwind CSS**. TaskFlow helps teams organize organizations, projects, tasks, members, permissions, and productivity from one dashboard.
 
-**Live application:** https://task-flow-frontend-virid.vercel.app  
+**Live application:** https://task-flow-frontend-virid.vercel.app/login  
 **Backend API:** https://taskflow-backend-i7ax.onrender.com  
 **Backend repository:** https://github.com/Z2109/Task-Flow
 
@@ -119,7 +119,7 @@ The frontend communicates with the TaskFlow REST API through Axios. Configure `N
 
 - **Backend source:** https://github.com/Z2109/Task-Flow
 - **Production API:** https://taskflow-backend-i7ax.onrender.com
-- **Production frontend:** https://task-flow-frontend-virid.vercel.app
+- **Production frontend:** https://task-flow-frontend-virid.vercel.app/login
 
 Authentication uses a JWT token stored in the browser's local storage in the current implementation. Treat this as a client-side credential and never expose it in logs or public code.
 
